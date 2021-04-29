@@ -8,6 +8,8 @@ from argparse import ArgumentParser, RawTextHelpFormatter, FileType, SUPPRESS
 from .gitlab_tree import GitlabTree
 from .format import PrintFormat
 from .method import CloneMethod
+from .naming import FolderNaming
+from .archive import ArchivedResults
 from . import __version__ as VERSION
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
@@ -24,14 +26,19 @@ def main():
         sys.exit(1)
 
     if args.url is None:
-        print('Please specify a valid gitlab base url with the -h flag or the \'GITLAB_URL\' environment variable')
+        print('Please specify a valid gitlab base url with the -u flag or the \'GITLAB_URL\' environment variable')
+        sys.exit(1)
+
+    elif args.dest is None and args.print is False:
+        print('Please specify a destination for the gitlab tree')
         sys.exit(1)
 
     config_logging(args)
     includes=split(args.include)
     excludes=split(args.exclude)
-    tree = GitlabTree(args.url, args.token, args.method, includes,
-                      excludes, args.file, args.concurrency, args.verbose)
+
+    tree = GitlabTree(args.url, args.token, args.method, args.naming, args.archived.api_value, includes,
+                      excludes, args.file, args.concurrency, args.recursive, args.verbose)
     log.debug("Reading projects tree from gitlab at [%s]", args.url)
     tree.load_tree()
 
@@ -132,12 +139,26 @@ def parse_args(argv=None):
         choices=list(PrintFormat),
         help='print format (default: \'tree\')')
     parser.add_argument(
+        '-n',
+        '--naming',
+        type=FolderNaming.argparse,
+        choices=list(FolderNaming),
+        default=FolderNaming.argparse(os.environ.get('GITLABBER_FOLDER_NAMING', "name")),
+        help='the folder naming strategy for projects from the gitlab API attributes (default: "name")')
+    parser.add_argument(
         '-m',
         '--method',
         type=CloneMethod.argparse,
         choices=list(CloneMethod),
         default=os.environ.get('GITLABBER_CLONE_METHOD', "ssh"),
-        help='the method to use for cloning (either "ssh" or "http")')
+        help='the git transport method to use for cloning (default: "ssh")')
+    parser.add_argument(
+        '-a',
+        '--archived',
+        type=ArchivedResults.argparse,
+        choices=list(ArchivedResults),
+        default=ArchivedResults.INCLUDE,
+        help='include archived projects and groups in the results (default: "include")')
     parser.add_argument(
         '-i',
         '--include',
@@ -150,6 +171,12 @@ def parse_args(argv=None):
         metavar=('csv'),
         default=os.environ.get('GITLABBER_EXCLUDE', ""),
         help='comma delimited list of glob patterns of paths to projects or groups to exclude from clone/pull')
+    parser.add_argument(
+        '-r',
+        '--recursive',
+        action='store_true',
+        default=False,
+        help='clone/pull git submodules recursively')
     parser.add_argument(
         '--version',
         action='store_true',

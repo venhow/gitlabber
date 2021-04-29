@@ -5,9 +5,9 @@ from anytree.importer import DictImporter
 from .git import sync_tree
 from .format import PrintFormat
 from .method import CloneMethod
+from .naming import FolderNaming
 from .progress import ProgressBar
 import yaml
-import io
 import globre
 import logging
 import os
@@ -16,17 +16,29 @@ log = logging.getLogger(__name__)
 
 class GitlabTree:
 
-    def __init__(self, url, token, method, includes=[], excludes=[], in_file=None, concurrency=1, disable_progress=False):
+    def __init__(self, url, token, method, naming, archived=None, includes=[], excludes=[], in_file=None, concurrency=1, recursive=False, disable_progress=False):
         self.includes = includes
         self.excludes = excludes
         self.url = url
         self.root = Node("", root_path="", url=url)
-        self.gitlab = Gitlab(url, private_token=token)
+        self.gitlab = Gitlab(url, private_token=token,
+                             ssl_verify=GitlabTree.get_ca_path())
         self.method = method
+        self.naming = naming
+        self.archived = archived
         self.in_file = in_file
         self.concurrency = concurrency
+        self.recursive = recursive
         self.disable_progress = disable_progress
         self.progress = ProgressBar('* loading tree', disable_progress)
+
+    @staticmethod
+    def get_ca_path():
+        """
+        returns REQUESTS_CA_BUNDLE, CURL_CA_BUNDLE, or True
+        """
+        return next(item for item in [os.getenv('REQUESTS_CA_BUNDLE', None), os.getenv('CURL_CA_BUNDLE', None), True]
+                    if item is not None)
 
     def is_included(self, node):
         '''
@@ -82,37 +94,39 @@ class GitlabTree:
 
     def add_projects(self, parent, projects):
         for project in projects:
+            project_id = project.name if self.naming == FolderNaming.NAME else project.path
             project_url = project.ssh_url_to_repo if self.method is CloneMethod.SSH else project.http_url_to_repo
-            node = self.make_node(project.name, parent,
+            node = self.make_node(project_id, parent,
                                   url=project_url)
             self.progress.show_progress(node.name, 'project')
 
     def get_projects(self, group, parent):
-        projects = group.projects.list(as_list=False)
+        projects = group.projects.list(as_list=False, archived=self.archived)
         self.progress.update_progress_length(len(projects))
         self.add_projects(parent, projects)
-       
 
     def get_subgroups(self, group, parent):
-        subgroups = group.subgroups.list(as_list=False)
+        subgroups = group.subgroups.list(as_list=False, archived=self.archived)
         self.progress.update_progress_length(len(subgroups))
         for subgroup_def in subgroups:
             subgroup = self.gitlab.groups.get(subgroup_def.id)
-            node = self.make_node(subgroup.name, parent, url=subgroup.web_url)
+            subgroup_id = subgroup.name if self.naming == FolderNaming.NAME else subgroup.path
+            node = self.make_node(subgroup_id, parent, url=subgroup.web_url)
             self.progress.show_progress(node.name, 'group')
             self.get_subgroups(subgroup, node)
             self.get_projects(subgroup, node)
 
     def load_gitlab_tree(self):
-        groups = self.gitlab.groups.list(as_list=False)
+        groups = self.gitlab.groups.list(as_list=False, archived=self.archived)
         self.progress.init_progress(len(groups))
         for group in groups:
             if group.parent_id is None:
-                node = self.make_node(group.name, self.root, url=group.web_url)
+                group_id = group.name if self.naming == FolderNaming.NAME else group.path
+                node = self.make_node(group_id, self.root, url=group.web_url)
                 self.progress.show_progress(node.name, 'group')
                 self.get_subgroups(group, node)
                 self.get_projects(group, node)
-        
+
         elapsed = self.progress.finish_progress()
         log.debug("Loading projects tree from gitlab took [%s]", elapsed)
 
@@ -164,7 +178,7 @@ class GitlabTree:
         log.debug("Going to clone/pull [%s] groups and [%s] projects" %
                   (len(self.root.descendants) - len(self.root.leaves), len(self.root.leaves)))
         sync_tree(self.root, dest, concurrency=self.concurrency,
-                  disable_progress=self.disable_progress)
+                  disable_progress=self.disable_progress, recursive=self.recursive)
 
     def is_empty(self):
         return self.root.height < 1

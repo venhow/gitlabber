@@ -58,7 +58,8 @@ setup(
         'Programming Language :: Python :: 3.5',
         'Programming Language :: Python :: 3.6',
         'Programming Language :: Python :: 3.7',
-        'Programming Language :: Python :: 3.8'
+        'Programming Language :: Python :: 3.8',
+        'Programming Language :: Python :: 3.9'
     ],
     setup_requires = [
             'docopt', 
@@ -78,7 +79,7 @@ setup(
             'GitPython', 
             'python-gitlab'
     ],
-    tests_require=  ['coverage', 'pytest', 'pytest-cov'],
+    tests_require=  ['coverage', 'pytest', 'pytest-cov', 'pytest-integration'],
     entry_points = {
         'console_scripts': [
             'gitlabber=gitlabber.cli:main',
